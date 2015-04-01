@@ -89,6 +89,7 @@ class GraphAPI(object):
 
         self.access_token = access_token
         self.timeout = timeout
+        self.secure = False
 
         if version:
             version_regex = re.compile("^\d\.\d$")
@@ -104,6 +105,61 @@ class GraphAPI(object):
                                     " following format: #.# (e.g. 1.0).")
         else:
             self.version = "v" + default_version
+
+        self.unsecure_calls()
+
+    @staticmethod
+    def get_oauth_code(app_id, permissions, redirect_uri):
+        args = {
+            'client_id' : app_id,
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': ','.join(permission)
+        }
+
+        try:
+            response = requests.request(
+                'GET',
+                'http://www.facebook.com/dialog/oauth',
+                timeout=self.timeout,
+                params=args)
+
+        except requests.HTTPError as e:
+            response = json.loads(e.read())
+            raise GraphAPIError(response)
+
+    @staticmethod
+    def convert_code_token(app_id, app_secret, code):
+        pass
+
+    @staticmethod
+    def login(app_id, app_secret, permissions, redirect_uri):
+        code = GraphAPI.get_oauth_code(app_id,permissions,redirect_uri)
+        token = GraphAPI.convert_code_token(app_id, app_secret, code)
+        self.access_token = token
+
+    def update_appsecret_proof(self, app_secret):
+        dig = hmac.new(app_secret, msg=self.access_token,
+                       digest_mod=hashlib.sha256).digest()
+        self.appsecret_proof = base64.b64encode(dig).decode()
+
+    def secure_calls(self, app_secret):
+        if not self.secure:
+            self.secure = True
+            self.update_appsecret_proof(app_secret)
+
+    def unsecure_calls(self):
+        self.secure = False
+        self.appsecret_proof = None
+
+    @property
+    def access_token(self):
+        return self.access_token
+    @access_token.setter
+    def access_token(self, token, app_secret):
+        self.access_token = value
+        if self.secure:
+            self.update_appsecret_proof(app_secret)
 
     def get_object(self, id, **args):
         """Fetchs the given object from the graph."""
@@ -238,6 +294,12 @@ class GraphAPI(object):
                 post_args["access_token"] = self.access_token
             else:
                 args["access_token"] = self.access_token
+
+        if self.secure and self.appsecret_proof:
+            if post_args is not None:
+                post_args['appsecret_proof'] = self.appsecret_proof
+            else:
+                args['appsecret_proof'] = self.appsecret_proof
 
         try:
             response = requests.request(method or "GET",
